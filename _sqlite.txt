@@ -1,0 +1,66 @@
+class _sqlite ;                                                                                                                         
+public char name / (state='O', initialValue = 'SQLite');                                                                                
+                                                                                                                                        
+public common.utils._excp.class excp;                                                                                                   
+                                                                                                                                        
+lib2sqlite : method                                                                                                                     
+   lib  : i : char                                                                                                                      
+   fref : i : char                                                                                                                      
+   ;                                                                                                                                    
+   dcl char(1024) conn_str;                                                                                                             
+   dcl char(4096) tbl_list;                                                                                                             
+   dcl char(32)   this_tbl;                                                                                                             
+   dcl num j rc sqlrc sqlxrc;                                                                                                           
+   do;                                                                                                                                  
+      if libref(lib) ne 0 then throw excp;                                                                                              
+                                                                                                                                        
+      * only consider this operation for a new file - that is, the fileref exists, but the physical filename does not;                  
+      if fileref(fref) ge 0 then throw excp;                                                                                            
+                                                                                                                                        
+      conn_str = catx(';',                                                                                                              
+                  'dsn=SQLite3',                                                                                                        
+                  'Driver={SQLITE3 ODBC Driver}',                                                                                       
+                  'Database='||pathname(fref)                                                                                           
+                 );                                                                                                                     
+                                                                                                                                        
+      rc = libname('_sqlite3','','odbc','complete='||quote(conn_str));   put rc=;                                                       
+      if rc ne 0 then throw excp;                                                                                                       
+                                                                                                                                        
+      submit sql continue;                                                                                                              
+         reset noprint;                                                                                                                 
+         select memname into :mems separated by ','                                                                                     
+         from dictionary.tables                                                                                                         
+         where libname = upcase("&lib") and memtype='DATA';                                                                             
+      endsubmit;                                                                                                                        
+      tbl_list = strip(symget('mems')); call symdel('mems'); put tbl_list=;                                                             
+                                                                                                                                        
+      do j = 1 to countw(tbl_list);                                                                                                     
+         this_tbl = scan(tbl_list,j);                                                                                                   
+         put this_tbl=;                                                                                                                 
+         submit sql continue;                                                                                                           
+            create table _sqlite3.&this_tbl like          &lib.&this_tbl;                                                               
+         endsubmit;                                                                                                                     
+         sqlrc = symgetn('sqlrc'); sqlxrc = symgetn('sqlxrc'); put sqlrc= sqlxrc=;                                                      
+         *if symgetn('sqlrc') > 0 then throw excp;                                                                                      
+      end;                                                                                                                              
+      do j = 1 to countw(tbl_list);                                                                                                     
+         this_tbl = scan(tbl_list,j);                                                                                                   
+         put this_tbl=;                                                                                                                 
+         submit sql continue;                                                                                                           
+            insert into  _sqlite3.&this_tbl select * from &lib.&this_tbl;                                                               
+         endsubmit;                                                                                                                     
+         if symgetn('sqlrc') > 0 then throw excp;                                                                                       
+      end;                                                                                                                              
+                                                                                                                                        
+      rc = libname('_sqlite3');                                                                                                         
+                                                                                                                                        
+      catch excp;                                                                                                                       
+         rc = libname('_sqlite3');                                                                                                      
+         excp.capture(catx(' ',name,_method_));                                                                                         
+         excp.message = catx(' ',name,_method_,'ERROR');                                                                                
+         throw excp;                                                                                                                    
+      endcatch;                                                                                                                         
+   end;                                                                                                                                 
+endmethod;                                                                                                                              
+                                                                                                                                        
+endclass ;

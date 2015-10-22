@@ -1,0 +1,455 @@
+import sashelp.classes;                                                                                                                 
+                                                                                                                                        
+class _library;                                                                                                                         
+                                                                                                                                        
+public list liblist;                                                                                                                    
+                                                                                                                                        
+load : method  slist : i : char  return=num  / (forward = 'Y');                                                                         
+                                                                                                                                        
+                                                                                                                                        
+                                                                                                                                        
+_library : public method withLibList : i : list;                                                                                        
+      _self_.libList = copylist(withLibList);                                                                                           
+endmethod;                                                                                                                              
+                                                                                                                                        
+_library : public method fromSLIST : i : char;                                                                                          
+      dcl num rc = load(fromSLIST);                                                                                                     
+endmethod;                                                                                                                              
+                                                                                                                                        
+                                                                                                                                        
+load : method                                                                                                                           
+      slist : i : char                                                                                                                  
+      return=num                                                                                                                        
+      ;                                                                                                                                 
+      return(fillist('catalog',slist,_self_.liblist));                                                                                  
+endmethod;                                                                                                                              
+                                                                                                                                        
+load : method                                                                                                                           
+      list_in : i : list                                                                                                                
+      return=num                                                                                                                        
+      ;                                                                                                                                 
+      _self_.liblist = list_in;                                                                                                         
+      return(0);                                                                                                                        
+endmethod;                                                                                                                              
+                                                                                                                                        
+save : method                                                                                                                           
+      slist : i : char                                                                                                                  
+      return=num                                                                                                                        
+      ;                                                                                                                                 
+                                                                                                                                        
+      return(savelist('catalog',slist,_self_.liblist));                                                                                 
+endmethod;                                                                                                                              
+                                                                                                                                        
+save : method                                                                                                                           
+      return=list                                                                                                                       
+      ;                                                                                                                                 
+                                                                                                                                        
+      return(_self_.liblist);                                                                                                           
+endmethod;                                                                                                                              
+                                                                                                                                        
+applyTokens : method                                                                                                                    
+/* the base applyTokens method - others wrap this one to make things lexically nice */                                                  
+      libref : i : char                                                                                                                 
+      tokens : i : list                                                                                                                 
+      optional=                                                                                                                         
+         continue : i : char                                                                                                            
+      return=num                                                                                                                        
+      ;                                                                                                                                 
+                                                                                                                                        
+   dcl num change prx last_pos start pos len token_len replacement_len;                                                                 
+   dcl list lib;                                                                                                                        
+   dcl char(1024) lib_path;                                                                                                             
+   dcl char token token_name replacement;                                                                                               
+   dcl sclexception excp = _new_ sclexception();                                                                                        
+                                                                                                                                        
+   do;                                                                                                                                  
+      * the tokens to replace are always wrapped in angle brackets ;                                                                    
+      prx = prxparse('/<(\w|\s)+>/');                                                                                                   
+                                                                                                                                        
+      * get the library that we want to apply the tokens _to_;                                                                          
+      lib = getniteml(_self_.liblist,libref); if lib = 0 then throw excp;                                                               
+                                                                                                                                        
+      * MSP 2014-11-29 : adding a 'template' override so that tokens can be repeatedly applied ;                                        
+      * without having to terminate an entire object and start over ;                                                                   
+      * MSP 2014-12-10 : adding an optional 'continue' parameter in the method call so that ;                                           
+      * we can partially apply at one step and then re-apply at another step ;                                                          
+      if nameditem(lib,'template') > 0 and cmiss(continue) then lib_path = getnitemc(lib,'template',1,1,'ERROR');                       
+      else lib_path = getnitemc(lib,'path',1,1,'ERROR');                                                                                
+      if lib_path = 'ERROR' then do;                                                                                                    
+         excp.message = catx(' ',name,_method_,'ERROR: Could not find either template or path item for this lib.');                     
+         throw excp;                                                                                                                    
+      end;                                                                                                                              
+                                                                                                                                        
+      * use regex to apply the tokens ;                                                                                                 
+      last_pos = 0;                                                                                                                     
+      change = -1;                                                                                                                      
+      start = 1;                                                                                                                        
+      call prxnext(prx,start,-1,lib_path,pos,len);                                                                                      
+      if pos > 0 then do;                                                                                                               
+         do while (pos > 0);                                                                                                            
+            * get the token wrapped in angle brackets, then the token name itself ;                                                     
+            token       = substr(lib_path,pos,len);                                                                                     
+            token_name  = substr(token,2,len-2);                                                                                        
+            * look in the list provided - if a replacement isn't on the list, then leave the token ;                                    
+            * in the path name. ;                                                                                                       
+            replacement = getnitemc(tokens,token_name,1,1,token);                                                                       
+            if replacement ne token then do;                                                                                            
+               * MSP 2014-11-28 : a replacement will alter the string length, so adjust the new ;                                       
+               * starting position accoringly ;                                                                                         
+               token_len       = length(token);                                                                                         
+               replacement_len = length(replacement);                                                                                   
+               start = start + (replacement_len - token_len);                                                                           
+               * escape the backslashes for regex and replace everywhere;                                                               
+               replacement = tranwrd(replacement,'\','\\');                                                                             
+               lib_path = prxchange(cats('s/',token,'/',replacement,'/'),-1,lib_path);                                                  
+            end;                                                                                                                        
+            call prxnext(prx,start,-1,lib_path,pos,len);                                                                                
+         end;                                                                                                                           
+         change = setnitemc(lib,lib_path,'path');                                                                                       
+      end;                                                                                                                              
+      call prxfree(prx);                                                                                                                
+                                                                                                                                        
+      return(change);                                                                                                                   
+                                                                                                                                        
+      catch excp;                                                                                                                       
+         put name _method_ 'ABEND';                                                                                                     
+         call putlist(excp.traceback,catx(' ',name,_method_,'TRACEBACK='),0);                                                           
+         throw excp;                                                                                                                    
+      endcatch;                                                                                                                         
+                                                                                                                                        
+   end;                                                                                                                                 
+                                                                                                                                        
+endmethod;                                                                                                                              
+                                                                                                                                        
+applyTokens : method                                                                                                                    
+      libs   : i : list                                                                                                                 
+      tokens : i : list                                                                                                                 
+      optional=                                                                                                                         
+         continue : i : char                                                                                                            
+      return=list;                                                                                                                      
+                                                                                                                                        
+dcl num rc j;                                                                                                                           
+dcl list outlist;                                                                                                                       
+dcl char this_lib;                                                                                                                      
+outlist = makelist(); rc=setlattr(outlist,'honorcase');                                                                                 
+                                                                                                                                        
+do j = 1 to listlen(libs);                                                                                                              
+      this_lib = getitemc(libs,j);                                                                                                      
+      rc = insertn(outlist,applyTokens(this_lib,tokens,continue),-1,this_lib);                                                          
+end;                                                                                                                                    
+                                                                                                                                        
+return(outlist);                                                                                                                        
+                                                                                                                                        
+endmethod;                                                                                                                              
+                                                                                                                                        
+applyTokens : method                                                                                                                    
+      tokens : i : list                                                                                                                 
+      optional=                                                                                                                         
+         continue : i : char                                                                                                            
+      return=list                                                                                                                       
+      ;                                                                                                                                 
+                                                                                                                                        
+dcl num rc j;                                                                                                                           
+dcl list outlist;                                                                                                                       
+dcl char this_lib;                                                                                                                      
+outlist = makelist(); rc=setlattr(outlist,'honorcase');                                                                                 
+                                                                                                                                        
+do j = 1 to listlen(_self_.liblist);                                                                                                    
+      this_lib = nameitem(_self_.liblist,j);                                                                                            
+      rc = insertn(outlist,applyTokens(this_lib,tokens,continue),-1,this_lib);                                                          
+end;                                                                                                                                    
+                                                                                                                                        
+return(outlist);                                                                                                                        
+                                                                                                                                        
+endmethod;                                                                                                                              
+                                                                                                                                        
+template : method                                                                                                                       
+      libref : i : char                                                                                                                 
+      return=num;                                                                                                                       
+      dcl num rc;                                                                                                                       
+                                                                                                                                        
+      dcl list the_lib = getniteml(_self_.liblist,libref);                                                                              
+      if the_lib ne 0 then do;                                                                                                          
+         rc = setnitemc(the_lib,'path',                                                                                                 
+                        getnitemc(the_lib,'template',1,1,                                                                               
+                        getnitemc(the_lib,'path')                                                                                       
+                        ));                                                                                                             
+      end;                                                                                                                              
+      else rc=(-999);                                                                                                                   
+                                                                                                                                        
+      return rc;                                                                                                                        
+                                                                                                                                        
+endmethod;                                                                                                                              
+                                                                                                                                        
+template : method                                                                                                                       
+      libs : i : list                                                                                                                   
+      return=list;                                                                                                                      
+                                                                                                                                        
+      dcl num setrc rc j;                                                                                                               
+      dcl char this_lib;                                                                                                                
+      dcl list this_lib_info;                                                                                                           
+      dcl list outlist = makelist(); rc = setlattr(outlist,'honorcase');                                                                
+                                                                                                                                        
+      do j = 1 to listlen(libs);                                                                                                        
+         this_lib      = getitemc(libs,j);                                                                                              
+         this_lib_info = getniteml(_self_.liblist,this_lib);                                                                            
+         if this_lib_info ne 0 then do;                                                                                                 
+            setrc = setnitemc(this_lib_info,'path',                                                                                     
+                           getnitemc(this_lib_info,'template',1,1,                                                                      
+                           getnitemc(this_lib_info,'path')                                                                              
+                           ));                                                                                                          
+         end;                                                                                                                           
+         else setrc=(-999);                                                                                                             
+         rc = insertn(outlist,setrc,-1,this_lib);                                                                                       
+                                                                                                                                        
+      end;                                                                                                                              
+                                                                                                                                        
+      return outlist;                                                                                                                   
+                                                                                                                                        
+endmethod;                                                                                                                              
+                                                                                                                                        
+                                                                                                                                        
+template : method                                                                                                                       
+      return=list;                                                                                                                      
+                                                                                                                                        
+      dcl num rc j;                                                                                                                     
+      dcl list outlist = makelist(); rc=setlattr(outlist,'honorcase');                                                                  
+      dcl char thislib;                                                                                                                 
+      do j = 1 to listlen(_self_.liblist);                                                                                              
+         thislib = nameitem(_self_.liblist,j);                                                                                          
+         rc = insertn(outlist,_self_.template(thislib),-1,thislib);                                                                     
+      end;                                                                                                                              
+                                                                                                                                        
+      return outlist;                                                                                                                   
+                                                                                                                                        
+endmethod;                                                                                                                              
+                                                                                                                                        
+                                                                                                                                        
+assign : method                                                                                                                         
+      libref : i : char                                                                                                                 
+      return=num                                                                                                                        
+      ;                                                                                                                                 
+                                                                                                                                        
+      /* upcase everything, just to be sure */                                                                                          
+      libref = upcase(libref);                                                                                                          
+      /* make sure that the libref we're looking for actually exists */                                                                 
+      if nameditem(_self_.liblist,libref) = 0 then return(-1);                                                                          
+      /* expand the options in the list and call the libname function */                                                                
+      dcl list lib_info    = getniteml(_self_.liblist,libref);                                                                          
+      dcl char lib_engine  = getnitemc(lib_info,'engine');                                                                              
+      dcl char lib_path    = getnitemc(lib_info,'path');                                                                                
+      dcl char lib_options = getnitemc(lib_info,'options');                                                                             
+                                                                                                                                        
+      return(libname(libref,lib_path,lib_engine,lib_options));                                                                          
+                                                                                                                                        
+endmethod;                                                                                                                              
+                                                                                                                                        
+assign : method                                                                                                                         
+      librefs : i : list                                                                                                                
+      return=list                                                                                                                       
+      ;                                                                                                                                 
+                                                                                                                                        
+      dcl num rc i;                                                                                                                     
+      dcl list outlist = makelist();                                                                                                    
+                                                                                                                                        
+      do i = 1 to listlen(librefs);                                                                                                     
+         rc = insertn(outlist,assign(getitemc(librefs,i)),-1,getitemc(librefs,i));                                                      
+      end;                                                                                                                              
+                                                                                                                                        
+      return(outlist);                                                                                                                  
+                                                                                                                                        
+endmethod;                                                                                                                              
+                                                                                                                                        
+deassign : method                                                                                                                       
+      libref : i : char                                                                                                                 
+      return=num                                                                                                                        
+      ;                                                                                                                                 
+                                                                                                                                        
+      /* upcase everything, just to be sure */                                                                                          
+      libref = upcase(libref);                                                                                                          
+                                                                                                                                        
+      /* make sure that the libref we're looking for actually exists */                                                                 
+      if nameditem(_self_.liblist,libref) = 0 then return(-1);                                                                          
+      else return(libname(libref));                                                                                                     
+endmethod;                                                                                                                              
+                                                                                                                                        
+deassign : method                                                                                                                       
+      librefs : i : list                                                                                                                
+      return=list                                                                                                                       
+      ;                                                                                                                                 
+                                                                                                                                        
+      dcl num rc i;                                                                                                                     
+      dcl list outlist = makelist();                                                                                                    
+                                                                                                                                        
+      do i = 1 to listlen(librefs);                                                                                                     
+         rc = insertn(outlist,deassign(getitemc(librefs,i)),-1,getitemc(librefs,i));                                                    
+      end;                                                                                                                              
+                                                                                                                                        
+      return(outlist);                                                                                                                  
+                                                                                                                                        
+endmethod;                                                                                                                              
+                                                                                                                                        
+assignAll : method                                                                                                                      
+      return=list                                                                                                                       
+      ;                                                                                                                                 
+                                                                                                                                        
+      dcl num rc i;                                                                                                                     
+      dcl list outlist = makelist();                                                                                                    
+                                                                                                                                        
+      do i = 1 to listlen(_self_.liblist);                                                                                              
+         rc = insertn(outlist,assign(nameitem(_self_.liblist,i)),-1,nameitem(_self_.liblist,i));                                        
+      end;                                                                                                                              
+                                                                                                                                        
+      return(outlist);                                                                                                                  
+                                                                                                                                        
+endmethod;                                                                                                                              
+                                                                                                                                        
+deassignAll : method                                                                                                                    
+      return=list                                                                                                                       
+      ;                                                                                                                                 
+                                                                                                                                        
+      dcl num rc i;                                                                                                                     
+      dcl list outlist = makelist();                                                                                                    
+                                                                                                                                        
+      do i = 1 to listlen(_self_.liblist);                                                                                              
+         rc = insertn(outlist,deassign(nameitem(_self_.liblist,i)),-1,nameitem(_self_.liblist,i));                                      
+      end;                                                                                                                              
+                                                                                                                                        
+      return(outlist);                                                                                                                  
+                                                                                                                                        
+endmethod;                                                                                                                              
+                                                                                                                                        
+add : method                                                                                                                            
+      lib  : i : char                                                                                                                   
+      info : i : list                                                                                                                   
+      return=num                                                                                                                        
+      ;                                                                                                                                 
+                                                                                                                                        
+      if (nameditem(info,'path') = 0 or nameditem(info,'engine') = 0 or nameditem(info,'options') = 0) then return(-2);                 
+      else if nameditem(_self_.liblist,lib) > 0 then return(-1);                                                                        
+      else return(insertl(_self_.liblist,info,-1,lib));                                                                                 
+                                                                                                                                        
+endmethod;                                                                                                                              
+                                                                                                                                        
+remove : method                                                                                                                         
+      lib : i : char                                                                                                                    
+      return=num                                                                                                                        
+      ;                                                                                                                                 
+                                                                                                                                        
+      if ^(nameditem(_self_.liblist,lib)) then return(-1);                                                                              
+      else return(delnitem(_self_.liblist,lib));                                                                                        
+                                                                                                                                        
+endmethod;                                                                                                                              
+                                                                                                                                        
+remove : method                                                                                                                         
+      libs : i : list                                                                                                                   
+      return=list;                                                                                                                      
+                                                                                                                                        
+      dcl num j rc;                                                                                                                     
+      dcl list outlist = makelist(); rc = setlattr(outlist,'honorcase');                                                                
+                                                                                                                                        
+      dcl char thislib;                                                                                                                 
+      do j = 1 to listlen(libs);                                                                                                        
+         thislib = getitemc(libs,j);                                                                                                    
+         insertn(outlist,remove(thislib),-1,thislib);                                                                                   
+      end;                                                                                                                              
+                                                                                                                                        
+      return(outlist);                                                                                                                  
+endmethod;                                                                                                                              
+                                                                                                                                        
+replace : method                                                                                                                        
+      lib  : i : char                                                                                                                   
+      info : i : list                                                                                                                   
+      return=num                                                                                                                        
+      ;                                                                                                                                 
+                                                                                                                                        
+      return(setniteml(_self_.liblist,info,lib));                                                                                       
+endmethod;                                                                                                                              
+                                                                                                                                        
+                                                                                                                                        
+info : method                                                                                                                           
+      lib : i : char                                                                                                                    
+      inf : i : char                                                                                                                    
+      return=char                                                                                                                       
+      ;                                                                                                                                 
+                                                                                                                                        
+      return(getnitemc(getniteml(_self_.liblist,lib),inf,1,1,'ERROR'));                                                                 
+endmethod;                                                                                                                              
+                                                                                                                                        
+info : method                                                                                                                           
+      lib : i : char                                                                                                                    
+      return=list                                                                                                                       
+      ;                                                                                                                                 
+      dcl list blanklist = makelist();                                                                                                  
+      dcl list outlist = getniteml(_self_.liblist,lib,1,1,blanklist);                                                                   
+      return(outlist);                                                                                                                  
+endmethod;                                                                                                                              
+                                                                                                                                        
+info : method                                                                                                                           
+      libs : i : list                                                                                                                   
+      return=list                                                                                                                       
+      ;                                                                                                                                 
+      dcl num j rc;                                                                                                                     
+      dcl char lib;                                                                                                                     
+      dcl list outlist = makelist(); rc=setlattr(outlist,'honorcase');                                                                  
+      do j = 1 to listlen(libs);                                                                                                        
+         lib = getitemc(libs,j);                                                                                                        
+         rc = insertl(outlist,_self_.info(lib),-1,lib);                                                                                 
+      end;                                                                                                                              
+      return(outlist);                                                                                                                  
+endmethod;                                                                                                                              
+                                                                                                                                        
+info : method                                                                                                                           
+      return=list                                                                                                                       
+      ;                                                                                                                                 
+      return(_self_.liblist);                                                                                                           
+endmethod;                                                                                                                              
+                                                                                                                                        
+exists : method                                                                                                                         
+      lib : i : char                                                                                                                    
+      return=num;                                                                                                                       
+      dcl num rc ex;                                                                                                                    
+      dcl char path = info(lib,'path');                                                                                                 
+      rc = filename('_tmplibp',path);                                                                                                   
+      ex = fexist('_tmplibp');                                                                                                          
+      rc = filename('_tmplibp','');                                                                                                     
+                                                                                                                                        
+      return(ex);                                                                                                                       
+endmethod;                                                                                                                              
+                                                                                                                                        
+exists : method                                                                                                                         
+      return=list                                                                                                                       
+      ;                                                                                                                                 
+                                                                                                                                        
+dcl num j rc;                                                                                                                           
+dcl char lib_name;                                                                                                                      
+dcl list outlist = makelist(); rc=setlattr(outlist,'honorcase');                                                                        
+                                                                                                                                        
+do j = 1 to listlen(_self_.liblist);                                                                                                    
+      lib_name = nameitem(_self_.liblist,j);                                                                                            
+      rc = setnitemn(outlist,exists(lib_name),lib_name,1,1);                                                                            
+end;                                                                                                                                    
+                                                                                                                                        
+return(outlist);                                                                                                                        
+endmethod;                                                                                                                              
+                                                                                                                                        
+create : method                                                                                                                         
+      lib : i : char                                                                                                                    
+      return=char                                                                                                                       
+      ;                                                                                                                                 
+                                                                                                                                        
+dcl char new_dir parent_dir new_lib;                                                                                                    
+                                                                                                                                        
+dcl char lib_path = info(lib,'path');                                                                                                   
+dcl num  already_exists = exists(lib);                                                                                                  
+if already_exists = 1 then return ('ALREADY EXISTS');                                                                                   
+else do;                                                                                                                                
+   new_dir = scan(lib_path,-1,'\');                                                                                                     
+   parent_dir = substr(lib_path,1,length(lib_path)-length(new_dir)-1);                                                                  
+                                                                                                                                        
+   new_lib = dcreate(new_dir,parent_dir);                                                                                               
+end;                                                                                                                                    
+return(new_lib);                                                                                                                        
+endmethod;                                                                                                                              
+                                                                                                                                        
+endclass;

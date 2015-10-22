@@ -1,0 +1,466 @@
+class parser;                                                                                                                           
+private char classname / (initialValue = 'JSON::');                                                                                     
+                                                                                                                                        
+/* we're going to blatantly rip off (port!) the C# parser source code available at:    */                                               
+/* http://techblog.procurios.nl/l/nl/library/                                                                                           
+   download/T0T8-a-Vseqxm_a_XJuVWV98do40S_a_jY8rsw/JSON.cs?format=save_to_disk&ext=.cs */                                               
+                                                                                                                                        
+/* see also JSON spec at JSON.org                                                      */                                               
+                                                                                                                                        
+/* to enable logging : run the following two commands                                  */                                               
+/*       c '*put classname' 'put classname' all;                                       */                                               
+/*       c '*call putlist'  'call putlist'  all;                                       */                                               
+                                                                                                                                        
+/* to diable logging : run the following two commands                                  */                                               
+/*       c 'put classname' '*put classname' all;                                       */                                               
+/*       c 'call putlist'  '*call putlist'  all;                                       */                                               
+                                                                                                                                        
+                                                                                                                                        
+/* token maps - less memory to pass a number than a character back */                                                                   
+private num TOKEN_NONE           / (initialValue = 0);                                                                                  
+private num TOKEN_CURLY_OPEN     / (initialValue = 1);                                                                                  
+private num TOKEN_CURLY_CLOSE    / (initialValue = 2);                                                                                  
+private num TOKEN_SQUARED_OPEN   / (initialValue = 3);                                                                                  
+private num TOKEN_SQUARED_CLOSE  / (initialValue = 4);                                                                                  
+private num TOKEN_COLON          / (initialValue = 5);                                                                                  
+private num TOKEN_COMMA          / (initialValue = 6);                                                                                  
+private num TOKEN_STRING         / (initialValue = 7);                                                                                  
+private num TOKEN_NUMBER         / (initialValue = 8);                                                                                  
+private num TOKEN_TRUE           / (initialValue = 9);                                                                                  
+private num TOKEN_FALSE          / (initialValue = 10);                                                                                 
+private num TOKEN_NULL           / (initialValue = 11);                                                                                 
+                                                                                                                                        
+/* just found this one out - turns out that you can't mix UPDATE parameters with ANY OTHER TYPE */                                      
+/* IT DOESN'T UPDATE - UGH, SAS!                                                                */                                      
+                                                                                                                                        
+/* will probably move to a useclass type setup, so we can roll everything into a single class rather */                                 
+/* than having a separate parser and writer. for now, forward methods it is                          */                                 
+parse_string : private method json(*):u:char idx:u:num return=char / (forward='Y');                                                     
+parse_num    : private method json(*):u:char idx:u:num return=num  / (forward='Y');                                                     
+parse_obj    : private method json(*):u:char idx:u:num j_list:u:list return=list / (forward='Y');                                       
+parse_array  : private method json(*):u:char idx:u:num j_list:u:list return=list / (forward='Y');                                       
+parse_value  : private method json(*):u:char idx:u:num j_list:u:list return=char / (forward='Y');                                       
+                                                                                                                                        
+                                                                                                                                        
+parse : method                                                                                                                          
+      json_in : i : char(32767)                                                                                                         
+      optional =                                                                                                                        
+         condense : i : char                                                                                                            
+      return=list;                                                                                                                      
+                                                                                                                                        
+      dcl num i rc;                                                                                                                     
+                                                                                                                                        
+      /* a performace hack to deal with the SAS build editor - there is no distinction between nulls and spaces   */                    
+      /* if you have a bunch of whitespace that you leave in the build editor, you'll see a noticable performance */                    
+      /* hit trying to parse it - we can reduce all double whitespace characters to a single space, but there's a */                    
+      /* chance you'll alter something along the way if you intend to have multiple whitespace characters. use w  */                    
+      /* caution                                                                                                  */                    
+      if upcase(first(condense))='C' then do until(prxmatch('/\s{2}/',json_in) = 0);                                                    
+         json_in = prxchange('s/\s{2}/ /',-1,json_in);                                                                                  
+      end;                                                                                                                              
+                                                                                                                                        
+      /* start by getting the string itself into an array of single characters */                                                       
+      dcl num  len     = length(json_in);                                                                                               
+      *put classname _method_ ':: BEGIN';                                                                                               
+      *put classname _method_ 'Parsing JSON of ' len=;                                                                                  
+      dcl char json[*] = makearray(len);                                                                                                
+                                                                                                                                        
+      do i = 1 to len;                                                                                                                  
+         json{i} = substr(json_in,i,1);                                                                                                 
+      end;                                                                                                                              
+                                                                                                                                        
+      /* create the list that will hold the resulting JSON */                                                                           
+      dcl list json_list = makelist();                                                                                                  
+      rc = setlattr(json_list,'honorcase;');                                                                                            
+                                                                                                                                        
+      dcl num json_idx = 0;                                                                                                             
+      dcl char finished = _self_.parse_value(json,json_idx,json_list);                                                                  
+      *call putlist(json_list,'The List is=',0);                                                                                        
+      *put finished=;                                                                                                                   
+                                                                                                                                        
+      dcl list outlist = getiteml(json_list);                                                                                           
+                                                                                                                                        
+return(outlist);                                                                                                                        
+                                                                                                                                        
+endmethod;                                                                                                                              
+                                                                                                                                        
+get_next_char : method                                                                                                                  
+/* helper method - passes over blanks in the character array */                                                                         
+      json(*) : u : char                                                                                                                
+      idx     : u : num                                                                                                                 
+      ;                                                                                                                                 
+                                                                                                                                        
+     *put classname _method_ ':: BEGIN';                                                                                                
+                                                                                                                                        
+      /* increment the index by one, and maybe more */                                                                                  
+      if idx = dim(json) then leave;                                                                                                    
+                                                                                                                                        
+      idx+1;                                                                                                                            
+     *put classname _method_ '::' idx= json(idx)=;                                                                                      
+      /* look at the next non-blank value - wrap in a do loop to consume blanks */                                                      
+      if prxmatch('/\s/',json{idx}) ne 0 then do until(prxmatch('/\s/',json{idx}) = 0);                                                 
+         idx+1;                                                                                                                         
+         * Keep this one at debug level - it will just crush any logging done ;                                                         
+         *put classname _method_ '::' idx= json(idx)=;                                                                                  
+      end;                                                                                                                              
+     *put classname _method_ ':: Returning at ' idx= 'with' json(idx)=;                                                                 
+                                                                                                                                        
+endmethod;                                                                                                                              
+                                                                                                                                        
+look_ahead : method                                                                                                                     
+/* helper method - returns a string given a specific number of places forward without moving the index */                               
+      json(*) : i : char                                                                                                                
+      idx     : i : num /* which is why the index doesn't move */                                                                       
+      spaces  : i : num                                                                                                                 
+      return = char                                                                                                                     
+      ;                                                                                                                                 
+                                                                                                                                        
+      dcl char out;                                                                                                                     
+      dcl num j;                                                                                                                        
+                                                                                                                                        
+      do j = idx to (idx+spaces-1);                                                                                                     
+         out = cats(out,json(j));                                                                                                       
+      end;                                                                                                                              
+                                                                                                                                        
+return(out);                                                                                                                            
+endmethod;                                                                                                                              
+                                                                                                                                        
+next_token : method                                                                                                                     
+/* helper method - figures out what type of value you need to deal with */                                                              
+      json(*) : u :char                                                                                                                 
+      idx     : u : num                                                                                                                 
+      return=num                                                                                                                        
+      ;                                                                                                                                 
+                                                                                                                                        
+     *put classname _method_ ':: BEGIN';                                                                                                
+                                                                                                                                        
+      dcl num token_out;                                                                                                                
+      dcl num rem_len = dim(json) - idx;                                                                                                
+     *put classname _method_ ':: check of remaining length gives' rem_len;                                                              
+                                                                                                                                        
+      /* if you are at the end of the json string, return a blank */                                                                    
+      if rem_len = 0 then return(TOKEN_NONE);                                                                                           
+                                                                                                                                        
+      /* move the index to the next non-blank value */                                                                                  
+     *put classname _method_ ':: getting next non-blank character';                                                                     
+      get_next_char(json,idx);                                                                                                          
+     *put classname _method_ ':: returned' idx= json(idx)=;                                                                             
+                                                                                                                                        
+      /* now, figure out what to do with it */                                                                                          
+      select(json(idx));                                                                                                                
+         when('{')  token_out = TOKEN_CURLY_OPEN;                                                                                       
+         when('}')  token_out = TOKEN_CURLY_CLOSE;                                                                                      
+         when('[')  token_out = TOKEN_SQUARED_OPEN;                                                                                     
+         when(']')  token_out = TOKEN_SQUARED_CLOSE;                                                                                    
+         when(',')  token_out = TOKEN_COMMA;                                                                                            
+         when('"')  token_out = TOKEN_STRING;                                                                                           
+         when(':')  token_out = TOKEN_COLON;                                                                                            
+         otherwise do;                                                                                                                  
+            if json(idx) in ('0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '-') then token_out = TOKEN_NUMBER;                      
+            else if rem_len ge 5 and look_ahead(json,idx,5) = 'false' then do;                                                          
+              *put classname _method_ ':: FOUND FALSE';                                                                                 
+               token_out = TOKEN_FALSE;                                                                                                 
+               idx+4;                                                                                                                   
+            end;                                                                                                                        
+            else if rem_len ge 4 and look_ahead(json,idx,4) = 'true'  then do;                                                          
+              *put classname _method_ ':: FOUND TRUE';                                                                                  
+               token_out = TOKEN_TRUE;                                                                                                  
+               idx+3;                                                                                                                   
+            end;                                                                                                                        
+            else if rem_len ge 4 and look_ahead(json,idx,4) = 'null'  then do;                                                          
+              *put classname _method_ ':: FOUND NULL';                                                                                  
+               token_out = TOKEN_NULL;                                                                                                  
+               idx+3;                                                                                                                   
+            end;                                                                                                                        
+            /* okay - there are some things that need to be done to handle true, false, and null values     */                          
+            /* buuuut, we're not going to deal with them right now - not like SAS can deal with them anyway */                          
+            else token_out = TOKEN_NONE;                                                                                                
+         end;                                                                                                                           
+      end;                                                                                                                              
+     *put classname _method_ ':: returning=' token_out 'at' idx=;                                                                       
+     *put classname _method_ ':: END';                                                                                                  
+return(token_out);                                                                                                                      
+endmethod;                                                                                                                              
+                                                                                                                                        
+parse_value : method                                                                                                                    
+      json(*) : u : char                                                                                                                
+      idx     : u : num                                                                                                                 
+      outlist : u : list                                                                                                                
+      return = char                                                                                                                     
+      ;                                                                                                                                 
+                                                                                                                                        
+      dcl sashelp.classes.type.class out = _new_ sashelp.classes.type();                                                                
+      dcl char(1) valtype;                                                                                                              
+      /* per the JSON spec, a value can can be one of the following :           */                                                      
+      /* a string, a number, an object, an array, boolean true, boolean false   */                                                      
+      /* and null (true, false, and null are _not_ strings, and they are lower- */                                                      
+      /* case _only_                                                            */                                                      
+                                                                                                                                        
+      /* we should be able to determine what kind of value we are dealing with  */                                                      
+      /* by looking at the next token -                                         */                                                      
+      /* a  string will be a double quote                                       */                                                      
+      /* a  number will be a digit or a negative sign                           */                                                      
+      /* an object will be an opening curly brace                               */                                                      
+      /* an array  will be an opening square bracket                            */                                                      
+      /* true, false and null still need to be handled somehow                  */                                                      
+      /* anything else would be really, really strange                          */                                                      
+     *put classname _method_ ':: BEGIN';                                                                                                
+     *put classname _method_ ':: Getting next token';                                                                                   
+                                                                                                                                        
+      dcl num the_token = next_token(json,idx);                                                                                         
+     *put classname _method_ ':: Got' the_token=;                                                                                       
+                                                                                                                                        
+      select(the_token);                                                                                                                
+         when(TOKEN_STRING)        do; valtype='C'; insertc(outlist,parse_string(json,idx),-1);                   end;                  
+         when(TOKEN_NUMBER)        do; valtype='N'; insertn(outlist,parse_num(json,idx),-1);                      end;                  
+         when(TOKEN_CURLY_OPEN)    do; valtype='O'; insertl(outlist,parse_obj(json,idx,outlist),-1);              end;                  
+         when(TOKEN_SQUARED_OPEN)  do; valtype='L'; insertl(outlist,parse_array(json,idx,outlist),-1,'_ARRAY_');  end;                  
+         when(TOKEN_TRUE)          do; valtype='T'; insertc(outlist,'_TRUE_',-1);  end;                                                 
+         when(TOKEN_FALSE)         do; valtype='F'; insertc(outlist,'_FALSE_',-1); end;                                                 
+         when(TOKEN_NULL)          do; valtype='X'; insertc(outlist,'_NULL_',-1);  end;                                                 
+         when(TOKEN_CURLY_CLOSE)   put 'How did CURLY_CLOSE happen?';                                                                   
+         when(TOKEN_SQUARED_CLOSE) put 'How did SQUARED_CLOSE happen?';                                                                 
+         when(TOKEN_NONE)          put 'How did NONE happen?';                                                                          
+         otherwise;                                                                                                                     
+      end;                                                                                                                              
+                                                                                                                                        
+return(valtype);                                                                                                                        
+endmethod;                                                                                                                              
+                                                                                                                                        
+parse_string : method                                                                                                                   
+      json(*) : u : char                                                                                                                
+      idx     : u : num                                                                                                                 
+      return = char                                                                                                                     
+      ;                                                                                                                                 
+                                                                                                                                        
+     *put classname _method_ ':: BEGIN';                                                                                                
+      /* c# source code calls for a StringBuilder object - well, we don't have that, */                                                 
+      /* but we can use SAS functions to deal with appends and the like              */                                                 
+      dcl num  complete = 0;                                                                                                            
+      dcl char(32767) c;                                                                                                                
+      dcl char(32767) out = '';                                                                                                         
+                                                                                                                                        
+      /* theoretically, you're only in this method because you're in a string already */                                                
+      /* and you're sitting on the initial double-quote. get the next character by    */                                                
+      /* incrementing the index by one                                                */                                                
+     *put classname _method_ ':: Expecting a double quote' idx= json(idx)=;                                                             
+      idx+1;                                                                                                                            
+     *put classname _method_ ':: Starting character parse with' idx= json(idx)=;                                                        
+      /* now, analyze every character, one by one, until the string is complete - per */                                                
+      /* the spec, there are really three things you need to look at. if the next char*/                                                
+      /* is a double quote, you're at the end of the string. if the next character is */                                                
+      /* an escape character, you'll need to deal with it somehow. otherwise, just go */                                                
+      /* ahead and append away                                                        */                                                
+      do until(complete=1);                                                                                                             
+         if idx = dim(json) then do;                                                                                                    
+            *put classname _method_ ':: END OF JSON REACHED';                                                                           
+            leave;                                                                                                                      
+         end;                                                                                                                           
+         c = json(idx);                                                                                                                 
+         *put classname _method_ ':: got' c=;                                                                                           
+         select(c);                                                                                                                     
+            /* if the next character is the closing part of the string, you're done */                                                  
+            when('"') do;                                                                                                               
+               *put classname _method_ ':: COMPLETE';                                                                                   
+               complete=1;                                                                                                              
+            end;                                                                                                                        
+            /* if it's an escape character, deal with it - which is a bit of a pain */                                                  
+            when('\') do;                                                                                                               
+               *put classname _method_ ':: ESCAPE CHARACTER' c=;                                                                        
+               /* NEED TO ADD CODE TO HANDLE ESCAPE CHARACTERS */                                                                       
+               /* escape characters can only be one of the following: ", \, /, b, f, n, r, t, u<4dig> */                                
+               idx+1;                                                                                                                   
+               c = json(idx);                                                                                                           
+               *put classname _method ':: NEXT CHARACTER' c=;                                                                           
+               select(c);                                                                                                               
+                  when('"') out=out||c;                                                                                                 
+                  when('\') out=out||c;                                                                                                 
+                  when('/') out=out||c;                                                                                                 
+                  when('b') /* ugh - a backspace character?      */ out = substr(out,1,length(out)-1);                                  
+                  when('f') /* a page break - 12 decimal, 0C hex */ out = out||'0C'x;                                                   
+                  when('n') /* newline - 13 decimal, 0D hex      */ out = out||'0D'x;                                                   
+                  when('r') /* carriage return - 10 dec, 0A hex  */ out = out||'0A'x;                                                   
+                  when('t') /* tab character - 09 dec, 09 hex    */ out = out||'09'x;                                                   
+                  when('u')  /* some unicode character - needs work */ idx+4;                                                           
+                  otherwise; /* you've got a _real_ problem         */                                                                  
+               end;                                                                                                                     
+            end;                                                                                                                        
+            /* if it's not the closing string, and not an escaped value, a simple append will work */                                   
+            otherwise do;                                                                                                               
+               out = out||c;                                                                                                            
+            end;                                                                                                                        
+         end;                                                                                                                           
+         idx+1;                                                                                                                         
+      end;                                                                                                                              
+      /* at this point, you are on the next position right after the completed string. back up one so that when */                      
+      /* the method exits, it does so with the index directly on the trailing double-quote                      */                      
+      idx = idx - 1;                                                                                                                    
+     *put classname _method_ ':: Leaving at' idx= json(idx)= 'with value' out=;                                                         
+     *put classname _method_ ':: END';                                                                                                  
+                                                                                                                                        
+return(out);                                                                                                                            
+endmethod;                                                                                                                              
+                                                                                                                                        
+parse_num : method                                                                                                                      
+      json(*) : u : char                                                                                                                
+      idx     : u : num                                                                                                                 
+      return = num                                                                                                                      
+      ;                                                                                                                                 
+                                                                                                                                        
+                                                                                                                                        
+      /* c# source code gets to use a Double object with a TryParse method. clearly, we aren't going */                                 
+      /* to get that in SAS - so, we'll fall back to trying to do it by regex                        */                                 
+      dcl num num_prx;                                                                                                                  
+      dcl num temp_idx;                                                                                                                 
+      dcl num pos len;                                                                                                                  
+      dcl char json_num_str;                                                                                                            
+                                                                                                                                        
+      dcl num out;                                                                                                                      
+                                                                                                                                        
+      /* first, build a number-specific string back out of the array, without advancing the index    */                                 
+      num_prx = prxparse('/(-|\d|\+|\.|e|E)/');                                                                                         
+      temp_idx = idx;                                                                                                                   
+                                                                                                                                        
+      do while(prxmatch(num_prx,json(temp_idx)) = 1);                                                                                   
+         json_num_str = cats(json_num_str,json(temp_idx));                                                                              
+         if temp_idx = dim(json) then leave; else temp_idx+1;                                                                           
+      end;                                                                                                                              
+     *put classname _method_ ':: Will attempt to parse' json_num_str=;                                                                  
+      /* JSON spec : leading negative sign, one or more digits, perhaps a fractional part, perhaps   */                                 
+      /*             some scientific notation along with it.                                         */                                 
+      /*           : number : one of (int, int frac, int exp, int frac exp)                          */                                 
+      /* also, what is the SAS spec on this? can scientific notation be used for an SCL number value?*/                                 
+      /*                   <int---><frac-----><exp---------------->                                  */                                 
+      num_prx = prxparse('/-?[0-9]+(\.[0-9]+)?((e|E)(\+|-)[0-9]+)?$/');                                                                 
+                                                                                                                                        
+      call prxsubstr(num_prx,json_num_str,pos,len);                                                                                     
+      if pos = 0 then return(.);                                                                                                        
+      else do;                                                                                                                          
+         /* the temp index will now be the next position after the now-parsed number string. back up */                                 
+         /* the index to stop right at the end of the number                                         */                                 
+         idx = temp_idx - 1;                                                                                                            
+         out = inputn(json_num_str,'best32.');                                                                                          
+         return(out);                                                                                                                   
+      end;                                                                                                                              
+                                                                                                                                        
+endmethod;                                                                                                                              
+                                                                                                                                        
+parse_obj : method                                                                                                                      
+      /* an object is made up of the following: an opening curly brace, one or more comma-separated name-value pairs, */                
+      /* and a closing curly brace. the hard part is that the value in the name-value pair can be _anything_          */                
+                                                                                                                                        
+      json(*) : u : char                                                                                                                
+      idx     : u : num                                                                                                                 
+      o_list  : u : list                                                                                                                
+                                                                                                                                        
+      return = list                                                                                                                     
+      ;                                                                                                                                 
+                                                                                                                                        
+     *put classname _method_ ':: BEGIN';                                                                                                
+      dcl char nvp_name;                                                                                                                
+      dcl char nvp_type;                                                                                                                
+                                                                                                                                        
+      /* if you are in this method, you should be sitting on an opening curly brace. */                                                 
+     *put classname _method_ ':: Expecting opening curly brace at' idx= json(idx)=;                                                     
+      dcl num token;                                                                                                                    
+      dcl num complete = 0;                                                                                                             
+      dcl num rc;                                                                                                                       
+                                                                                                                                        
+      /* set up the output to be a list */                                                                                              
+      dcl list outlist = makelist();                                                                                                    
+      rc = setlattr(outlist,'honorcase');                                                                                               
+                                                                                                                                        
+      do while(complete=0);                                                                                                             
+        *put classname _method_ ':: looking at next token';                                                                             
+         token = next_token(json,idx);                                                                                                  
+        *put classname _method_ ':: got' token=;                                                                                        
+         select(token);                                                                                                                 
+                                                                                                                                        
+            /* if you hit a NONE token in the middle of an object, you've got a problem */                                              
+            when(TOKEN_NONE) do;                                                                                                        
+               *put classname _method_ ':: Got NONE' token=;                                                                            
+               return({});                                                                                                              
+            end;                                                                                                                        
+                                                                                                                                        
+            /* if you hit the comma, great - find the next thing                        */                                              
+            when(TOKEN_COMMA) do;                                                                                                       
+              *put classname _method_ ':: Got COMMA. There is another n-v pair' token=;                                                 
+            end;                                                                                                                        
+                                                                                                                                        
+            /* if you hit the end of the object, congrats, you're done */                                                               
+            when(TOKEN_CURLY_CLOSE) do;                                                                                                 
+              *put classname _method_ ':: Got CLOSE CURLY BRACE. We are done' token=;                                                   
+               complete=1;                                                                                                              
+            end;                                                                                                                        
+                                                                                                                                        
+            otherwise do;                                                                                                               
+              *put classname _method_ ':: Not NONE, COMMA, or CLOSE BRACE. Expecting name-value pair. Got' token=;                      
+               /* at this point we are at a name-value pair */                                                                          
+               /* first, get the name - which is a string wrapped in a type */                                                          
+                                                                                                                                        
+              *put classname _method_ ':: String parsing name';                                                                         
+               nvp_name  = parse_string(json,idx);                                                                                      
+              *put classname _method_ ':: Parsed ' nvp_name=;                                                                           
+               /* the name-value pair is separated by a colon */                                                                        
+              *put classname _method_ ':: Looking for COLON';                                                                           
+               token = next_token(json,idx);                                                                                            
+               if token ne TOKEN_COLON then return({});                                                                                 
+                                                                                                                                        
+               /* the value needs a full-on parsing, as it could be anything */                                                         
+              *put classname _method_ ':: Value parsing value';                                                                         
+               nvp_type = parse_value(json,idx,outlist);                                                                                
+               if nvp_type = 'L' then nvp_name = catx(' ','_ARRAY_',nvp_name);                                                          
+               nvp_name = nameitem(outlist,-1,nvp_name);                                                                                
+              *put classname _method_ ':: adding' nvp_name;                                                                             
+              *call putlist(nvp_value,catx(' ',classname,_method_,'value='),0);                                                         
+            end;                                                                                                                        
+         end;                                                                                                                           
+      end;                                                                                                                              
+     *call putlist(outlist,catx(' ',classname,_method_,'finally returning='),0);                                                        
+return(outlist);                                                                                                                        
+endmethod;                                                                                                                              
+                                                                                                                                        
+parse_array : method                                                                                                                    
+      json(*) : u : char                                                                                                                
+      idx     : u : num                                                                                                                 
+      a_list  : u : list                                                                                                                
+      return = list                                                                                                                     
+      ;                                                                                                                                 
+                                                                                                                                        
+      /* if you are in this method, you should be sitting on an opening curly brace. */                                                 
+     *put classname _method_ ':: Expecting opening bracket at' idx= json(idx)=;                                                         
+      dcl num token;                                                                                                                    
+      dcl num complete = 0;                                                                                                             
+      dcl num temp_idx;                                                                                                                 
+      /* set up the output to be a list */                                                                                              
+      dcl list outlist = makelist();                                                                                                    
+      dcl num rc = setlattr(outlist,'honorcase');                                                                                       
+                                                                                                                                        
+      do while(complete=0);                                                                                                             
+        *put classname _method_ ':: looking at next token';                                                                             
+         /* cheat : look at the next token, but store the current one before doing so */                                                
+         temp_idx = idx;                                                                                                                
+         token = next_token(json,idx);                                                                                                  
+                                                                                                                                        
+         /* there's no failure on a bad array setup - needs to be addressed ! */                                                        
+         select(token);                                                                                                                 
+            when(TOKEN_COMMA) do;                                                                                                       
+              *put classname _method_ ':: Found COMMA';                                                                                 
+               idx = temp_idx;                                                                                                          
+               token = next_token(json,idx);                                                                                            
+            end;                                                                                                                        
+            when(TOKEN_SQUARED_CLOSE) do;                                                                                               
+              *put classname _method_ ':: Found SQUARE_CLOSED';                                                                         
+               complete=1;                                                                                                              
+            end;                                                                                                                        
+            otherwise do;                                                                                                               
+               idx=temp_idx;                                                                                                            
+               parse_value(json,idx,outlist);                                                                                           
+            end;                                                                                                                        
+         end;                                                                                                                           
+      end;                                                                                                                              
+                                                                                                                                        
+return(outlist);                                                                                                                        
+endmethod;                                                                                                                              
+                                                                                                                                        
+endclass;

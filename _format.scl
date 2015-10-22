@@ -1,0 +1,40 @@
+class _format;                                                                                                                          
+/* this class exists to push locations onto the fmtsearch list without breaking existing format lookups */                              
+                                                                                                                                        
+delFmtSearch : method                                                                                                                   
+      loc : i : char                                                                                                                    
+      return=num                                                                                                                        
+      ;                                                                                                                                 
+                                                                                                                                        
+      dcl num thePrx   = prxparse('s/'||upcase(loc)||'\s+//');                                                                          
+      dcl char fmtlist = prxchange(thePrx,-1,optgetc('fmtsearch'));                                                                     
+      call prxfree(thePrx);                                                                                                             
+      return(optsetc('fmtsearch',fmtlist));                                                                                             
+endmethod;                                                                                                                              
+                                                                                                                                        
+                                                                                                                                        
+addFmtSearch : method                                                                                                                   
+      loc : i : char                                                                                                                    
+      return=num                                                                                                                        
+      ;                                                                                                                                 
+                                                                                                                                        
+      /* cache some stuff and make things nice */                                                                                       
+      loc = upcase(loc);                                                                                                                
+      dcl char existingFmts = optgetc('fmtsearch');                                                                                     
+                                                                                                                                        
+      /* if it's already there, bail out */                                                                                             
+      if index(existingFmts,loc) > 0 then return(-1);                                                                                   
+                                                                                                                                        
+                                                                                                                                        
+      /* otherwise, swap it in and return whatever code the optsetc function wants to return */                                         
+      dcl num  thePrx  = prxparse('s/(\()(.*)/$1'||loc||' $2/');                                                                        
+      dcl char newFmts = prxchange(thePrx,-1,existingFmts);                                                                             
+                                                                                                                                        
+      call prxfree(thePrx);                                                                                                             
+      return(optsetc('fmtsearch',newFmts));                                                                                             
+                                                                                                                                        
+endmethod;                                                                                                                              
+                                                                                                                                        
+                                                                                                                                        
+                                                                                                                                        
+endclass;
